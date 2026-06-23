@@ -1,1 +1,574 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>カードケース確認システム</title>
+    <!-- Tailwind CSS (スタイリング用) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS (Excel読み込み用) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Phosphor Icons (アイコン用) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <style>
+        /* 簡単なアニメーションとカスタムスタイル */
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+        .hidden-important { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans text-gray-800">
 
+    <div class="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+        
+        <!-- ヘッダーセクション -->
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <div class="flex items-center gap-3 mb-1">
+                    <h1 class="text-2xl font-bold">カードケース確認システム</h1>
+                    <!-- クラウドステータスバッジ -->
+                    <div id="cloudStatusBadge" class="flex items-center text-xs font-medium text-gray-600 bg-gray-100 px-2.5 py-1 rounded-full border border-gray-300">
+                        <i class="ph ph-cloud-slash mr-1 text-sm"></i>オフライン (未設定)
+                    </div>
+                </div>
+                <p class="text-sm text-gray-500">日々の所持状況を管理します</p>
+            </div>
+            
+            <div class="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                <div class="flex items-center space-x-2 bg-gray-50 px-3 py-2 rounded-lg border border-gray-200">
+                    <i class="ph ph-calendar text-gray-500 text-lg"></i>
+                    <input type="date" id="targetDateInput" class="bg-transparent border-none focus:ring-0 text-gray-700 font-medium outline-none">
+                </div>
+                
+                <input type="file" id="fileInput" class="hidden" accept=".xlsx, .xls, .csv">
+                <button onclick="document.getElementById('fileInput').click()" id="uploadBtn" class="flex items-center space-x-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
+                    <i class="ph ph-upload-simple text-lg"></i>
+                    <span>読込</span>
+                </button>
+
+                <button onclick="saveData()" id="saveBtn" class="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors shadow-sm">
+                    <i class="ph ph-floppy-disk text-lg"></i>
+                    <span>保存して共有</span>
+                </button>
+
+                <button onclick="openSettings()" class="p-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 rounded-lg shadow-sm transition-colors" title="Firebase連携設定">
+                    <i class="ph ph-gear text-xl"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- メッセージ表示エリア -->
+        <div id="messageArea" class="hidden-important"></div>
+
+        <!-- 検索ツールバー -->
+        <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+            <div class="relative w-full max-w-md">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <i class="ph ph-magnifying-glass text-gray-400 text-lg"></i>
+                </div>
+                <input type="text" id="searchInput" placeholder="社員名で検索..." class="block w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors">
+                <button id="clearSearchBtn" onclick="clearSearch()" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 hidden">
+                    <i class="ph ph-x text-lg"></i>
+                </button>
+            </div>
+            <div id="recordCount" class="text-sm font-medium text-gray-500 ml-4 whitespace-nowrap"></div>
+        </div>
+
+        <!-- メインの表セクション -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse min-w-[800px]">
+                    <thead>
+                        <tr class="bg-gray-50 text-gray-600 text-sm border-b border-gray-200">
+                            <th class="p-4 font-semibold w-16 text-center">NO.</th>
+                            <th class="p-4 font-semibold w-56">社員名称</th>
+                            <th class="p-4 font-semibold w-48">カードケースの有無</th>
+                            <th class="p-4 font-semibold w-48">準備金額 異常の有無</th>
+                            <th class="p-4 font-semibold min-w-[200px]">備考</th>
+                            <th class="p-4 font-semibold w-16 text-center">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-gray-100">
+                        <!-- ここにJavaScriptでテーブル行が生成されます -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="p-4 border-t border-gray-200 bg-gray-50">
+                <button onclick="addRow()" class="flex items-center space-x-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-4 py-2 rounded-lg transition-colors text-sm font-medium">
+                    <i class="ph ph-plus text-lg"></i>
+                    <span>新しい行を追加</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 設定モーダル -->
+    <div id="settingsModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden-important">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden fade-in">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                <h2 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <i class="ph ph-gear text-blue-600 text-xl"></i> Firebase 連携設定
+                </h2>
+                <button onclick="closeSettings()" class="text-gray-400 hover:text-gray-600">
+                    <i class="ph ph-x text-xl"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 space-y-4">
+                <p class="text-sm text-gray-600">
+                    Firebaseコンソールで取得した <code>const firebaseConfig = { ... }</code> のコードを下の枠にそのまま貼り付けてください。
+                </p>
+                <textarea id="configTextarea" placeholder="const firebaseConfig = {&#10;  apiKey: &quot;AIzaSy...&quot;,&#10;  authDomain: &quot;...&quot;,&#10;  projectId: &quot;...&quot;,&#10;  storageBucket: &quot;...&quot;,&#10;  messagingSenderId: &quot;...&quot;,&#10;  appId: &quot;...&quot;&#10;};" class="w-full h-48 p-4 font-mono text-sm bg-gray-900 text-green-400 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none resize-none" spellcheck="false"></textarea>
+                
+                <div class="bg-blue-50 text-blue-800 p-3 rounded-lg text-sm flex gap-2">
+                    <i class="ph ph-warning-circle text-lg flex-shrink-0 mt-0.5"></i>
+                    <p><strong>注意:</strong> この設定はご使用のブラウザのみに保存されます。Firebase側の「Firestore Database」のルール設定で、書き込み権限が許可されている必要があります。</p>
+                </div>
+            </div>
+
+            <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-between items-center">
+                <div id="disconnectBtnContainer"></div>
+                <div class="flex gap-3">
+                    <button onclick="closeSettings()" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors font-medium">キャンセル</button>
+                    <button onclick="saveConfigAndConnect()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2">
+                        <i class="ph ph-cloud text-lg"></i> 保存して連携する
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs (モジュール形式でインポート) -->
+    <script type="module">
+        import { initializeApp, getApps, deleteApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // ==========================================
+        // グローバル変数と初期状態
+        // ==========================================
+        let records = [
+            { id: 1, name: '野比のび太', hasCardCase: '', hasAmountAnomaly: '', notes: '' },
+            { id: 2, name: '骨川スネ夫', hasCardCase: '', hasAmountAnomaly: '', notes: '' },
+        ];
+        let targetDate = '2026-03-01';
+        let searchTerm = '';
+        
+        let firebaseApp = null;
+        let auth = null;
+        let db = null;
+        let unsubscribeSnapshot = null;
+        let cloudStatus = 'disconnected'; // disconnected, connected, error
+
+        const cardCaseOptions = ['', '有り', '無し', '返却済み'];
+        const amountAnomalyOptions = ['', '異常なし', '異常あり'];
+
+        // DOM要素の取得
+        const tableBody = document.getElementById('tableBody');
+        const searchInput = document.getElementById('searchInput');
+        const clearSearchBtn = document.getElementById('clearSearchBtn');
+        const recordCount = document.getElementById('recordCount');
+        const targetDateInput = document.getElementById('targetDateInput');
+        const fileInput = document.getElementById('fileInput');
+        const messageArea = document.getElementById('messageArea');
+        const cloudStatusBadge = document.getElementById('cloudStatusBadge');
+
+        // 初期化処理
+        window.addEventListener('DOMContentLoaded', () => {
+            targetDateInput.value = targetDate;
+            
+            // 検索イベントのバインド
+            searchInput.addEventListener('input', (e) => {
+                searchTerm = e.target.value;
+                clearSearchBtn.classList.toggle('hidden', searchTerm === '');
+                renderTable();
+            });
+
+            // ファイル読み込みイベントのバインド
+            fileInput.addEventListener('change', handleFileUpload);
+
+            // 日付変更イベントのバインド
+            targetDateInput.addEventListener('change', (e) => {
+                targetDate = e.target.value;
+            });
+
+            // 保存された設定があれば自動接続
+            const savedConfigStr = localStorage.getItem('myFirebaseConfig');
+            if (savedConfigStr) {
+                try {
+                    const config = JSON.parse(savedConfigStr);
+                    document.getElementById('configTextarea').value = JSON.stringify(config, null, 2);
+                    connectToFirebase(config);
+                } catch (e) {
+                    console.error("設定の読み込みエラー:", e);
+                }
+            }
+
+            renderTable();
+        });
+
+        // ==========================================
+        // UI 描画関数
+        // ==========================================
+        function getStatusColorClass(status) {
+            switch (status) {
+                case '有り': return 'bg-green-100 text-green-800 border-green-200';
+                case '無し': return 'bg-red-100 text-red-800 border-red-200';
+                case '返却済み': return 'bg-blue-100 text-blue-800 border-blue-200';
+                case '異常なし': return 'bg-green-100 text-green-800 border-green-200';
+                case '異常あり': return 'bg-orange-100 text-orange-800 border-orange-200';
+                default: return 'bg-gray-100 text-gray-800 border-gray-200';
+            }
+        }
+
+        window.renderTable = function() {
+            const filteredRecords = records.filter(record => 
+                record.name.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+
+            // 件数表示の更新
+            recordCount.textContent = `全 ${records.length} 名 ${searchTerm ? `(結果: ${filteredRecords.length} 名)` : ''}`;
+
+            tableBody.innerHTML = '';
+
+            if (records.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-gray-500">データがありません。「読込」からファイルをアップロードしてください。</td></tr>`;
+                return;
+            }
+
+            if (filteredRecords.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-gray-500">「${searchTerm}」に一致する社員は見つかりませんでした。</td></tr>`;
+                return;
+            }
+
+            filteredRecords.forEach((record, index) => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-blue-50/40 transition-colors group';
+
+                // NO.
+                const tdId = document.createElement('td');
+                tdId.className = 'p-4 text-center text-gray-500';
+                tdId.textContent = index + 1;
+
+                // 社員名称
+                const tdName = document.createElement('td');
+                tdName.className = 'p-4';
+                tdName.innerHTML = `<input type="text" value="${record.name}" oninput="updateRecord(${record.id}, 'name', this.value)" placeholder="氏名" class="w-full bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:ring-0 px-1 py-1 transition-colors">`;
+
+                // カードケース有無
+                const tdCard = document.createElement('td');
+                tdCard.className = 'p-4';
+                let cardOptionsHtml = '<option value="" disabled selected class="bg-white text-gray-500">未選択</option>';
+                cardCaseOptions.filter(opt => opt !== '').forEach(opt => {
+                    const selected = record.hasCardCase === opt ? 'selected' : '';
+                    cardOptionsHtml += `<option value="${opt}" ${selected} class="bg-white text-gray-800">${opt}</option>`;
+                });
+                const alertIcon1 = record.hasCardCase === '無し' ? `<i class="ph-fill ph-warning-circle text-red-500 absolute right-8 top-1/2 transform -translate-y-1/2 pointer-events-none"></i>` : '';
+                tdCard.innerHTML = `
+                    <div class="relative">
+                        <select onchange="updateRecord(${record.id}, 'hasCardCase', this.value); renderTable()" class="w-full appearance-none px-3 py-2 rounded-md border shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors cursor-pointer ${getStatusColorClass(record.hasCardCase)}">
+                            ${cardOptionsHtml}
+                        </select>
+                        ${alertIcon1}
+                    </div>
+                `;
+
+                // 準備金額異常有無
+                const tdAmount = document.createElement('td');
+                tdAmount.className = 'p-4';
+                let amountOptionsHtml = '<option value="" disabled selected class="bg-white text-gray-500">未選択</option>';
+                amountAnomalyOptions.filter(opt => opt !== '').forEach(opt => {
+                    const selected = record.hasAmountAnomaly === opt ? 'selected' : '';
+                    amountOptionsHtml += `<option value="${opt}" ${selected} class="bg-white text-gray-800">${opt}</option>`;
+                });
+                const alertIcon2 = record.hasAmountAnomaly === '異常あり' ? `<i class="ph-fill ph-warning-circle text-orange-500 absolute right-8 top-1/2 transform -translate-y-1/2 pointer-events-none"></i>` : '';
+                tdAmount.innerHTML = `
+                    <div class="relative">
+                        <select onchange="updateRecord(${record.id}, 'hasAmountAnomaly', this.value); renderTable()" class="w-full appearance-none px-3 py-2 rounded-md border shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors cursor-pointer ${getStatusColorClass(record.hasAmountAnomaly)}">
+                            ${amountOptionsHtml}
+                        </select>
+                        ${alertIcon2}
+                    </div>
+                `;
+
+                // 備考
+                const tdNotes = document.createElement('td');
+                tdNotes.className = 'p-4';
+                tdNotes.innerHTML = `<input type="text" value="${record.notes}" oninput="updateRecord(${record.id}, 'notes', this.value)" placeholder="特記事項" class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-md focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all">`;
+
+                // 削除ボタン
+                const tdAction = document.createElement('td');
+                tdAction.className = 'p-4 text-center';
+                tdAction.innerHTML = `
+                    <button onclick="deleteRow(${record.id})" class="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100">
+                        <i class="ph ph-trash text-lg"></i>
+                    </button>
+                `;
+
+                tr.appendChild(tdId);
+                tr.appendChild(tdName);
+                tr.appendChild(tdCard);
+                tr.appendChild(tdAmount);
+                tr.appendChild(tdNotes);
+                tr.appendChild(tdAction);
+
+                tableBody.appendChild(tr);
+            });
+        };
+
+        window.updateRecord = function(id, field, value) {
+            records = records.map(record => record.id === id ? { ...record, [field]: value } : record);
+        };
+
+        window.addRow = function() {
+            const newId = records.length > 0 ? Math.max(...records.map(r => r.id)) + 1 : 1;
+            records.push({ id: newId, name: '', hasCardCase: '', hasAmountAnomaly: '', notes: '' });
+            if (searchTerm) clearSearch();
+            renderTable();
+        };
+
+        window.deleteRow = function(id) {
+            records = records.filter(record => record.id !== id);
+            renderTable();
+        };
+
+        window.clearSearch = function() {
+            searchTerm = '';
+            searchInput.value = '';
+            clearSearchBtn.classList.add('hidden');
+            renderTable();
+        };
+
+        function showMessage(type, text) {
+            messageArea.className = `fade-in px-4 py-3 rounded-lg flex items-center space-x-2 shadow-sm ${type === 'success' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700 relative items-start'}`;
+            
+            let icon = type === 'success' ? '<i class="ph-fill ph-check-circle text-xl flex-shrink-0"></i>' : '<i class="ph-fill ph-warning-circle text-xl flex-shrink-0 mt-0.5"></i>';
+            let closeBtn = type === 'error' ? `<button onclick="document.getElementById('messageArea').classList.add('hidden-important')" class="absolute right-3 top-3 text-red-400 hover:text-red-600"><i class="ph ph-x text-lg"></i></button>` : '';
+            
+            messageArea.innerHTML = `${icon}<span class="font-medium pr-6">${text}</span>${closeBtn}`;
+            messageArea.classList.remove('hidden-important');
+
+            if (type === 'success') {
+                setTimeout(() => {
+                    messageArea.classList.add('hidden-important');
+                }, 4000);
+            }
+        }
+
+        function updateCloudBadge() {
+            if (cloudStatus === 'connected') {
+                cloudStatusBadge.className = "flex items-center text-xs font-medium text-green-700 bg-green-50 px-2.5 py-1 rounded-full border border-green-200";
+                cloudStatusBadge.innerHTML = '<i class="ph-fill ph-cloud text-sm mr-1"></i>クラウド同期中';
+                
+                document.getElementById('disconnectBtnContainer').innerHTML = `
+                    <button onclick="disconnectFirebase()" class="text-red-600 hover:text-red-700 text-sm font-medium px-3 py-2 rounded-lg hover:bg-red-50 transition-colors">連携を解除する</button>
+                `;
+            } else if (cloudStatus === 'error') {
+                cloudStatusBadge.className = "flex items-center text-xs font-medium text-red-700 bg-red-50 px-2.5 py-1 rounded-full border border-red-200";
+                cloudStatusBadge.innerHTML = '<i class="ph-fill ph-warning-circle text-sm mr-1"></i>接続エラー';
+            } else {
+                cloudStatusBadge.className = "flex items-center text-xs font-medium text-gray-600 bg-gray-100 px-2.5 py-1 rounded-full border border-gray-300";
+                cloudStatusBadge.innerHTML = '<i class="ph ph-cloud-slash text-sm mr-1"></i>オフライン (未設定)';
+                document.getElementById('disconnectBtnContainer').innerHTML = '';
+            }
+        }
+
+        // ==========================================
+        // Firebase 処理群
+        // ==========================================
+        async function connectToFirebase(config) {
+            try {
+                cloudStatus = 'disconnected';
+                updateCloudBadge();
+                
+                const apps = getApps();
+                if (apps.length > 0) {
+                    await deleteApp(apps[0]);
+                }
+
+                firebaseApp = initializeApp(config);
+                auth = getAuth(firebaseApp);
+                db = getFirestore(firebaseApp);
+
+                await signInAnonymously(auth);
+
+                cloudStatus = 'connected';
+                updateCloudBadge();
+                
+                // リアルタイム同期の開始
+                const docRef = doc(db, 'sharedData', 'cardCaseStatus');
+                if (unsubscribeSnapshot) unsubscribeSnapshot();
+                
+                unsubscribeSnapshot = onSnapshot(docRef, (snapshot) => {
+                    if (snapshot.exists()) {
+                        const data = snapshot.data();
+                        if (data.records) {
+                            records = data.records;
+                            renderTable();
+                        }
+                        if (data.targetDate) {
+                            targetDate = data.targetDate;
+                            targetDateInput.value = targetDate;
+                        }
+                    }
+                }, (error) => {
+                    console.error("データ取得エラー:", error);
+                    cloudStatus = 'error';
+                    updateCloudBadge();
+                    if (error.code === 'permission-denied') {
+                        showMessage('error', 'データベースへのアクセス権限がありません。Firestoreのルール設定を確認してください。');
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase接続エラー:", error);
+                cloudStatus = 'error';
+                updateCloudBadge();
+                showMessage('error', 'Firebaseへの接続に失敗しました。設定内容を確認してください。');
+                db = null;
+            }
+        }
+
+        window.saveConfigAndConnect = function() {
+            const inputText = document.getElementById('configTextarea').value;
+            try {
+                const match = inputText.match(/\{[\s\S]*\}/);
+                if (!match) throw new Error('設定情報 "{ ... }" が見つかりません。');
+                
+                const configObj = new Function("return " + match[0])();
+                
+                if (!configObj.apiKey || !configObj.projectId) {
+                    throw new Error('必要な項目(apiKey, projectIdなど)が含まれていません。');
+                }
+
+                localStorage.setItem('myFirebaseConfig', JSON.stringify(configObj));
+                connectToFirebase(configObj);
+                
+                closeSettings();
+                showMessage('success', 'Firebaseと連携しました！');
+
+            } catch (error) {
+                alert(`設定の解析に失敗しました:\n${error.message}`);
+            }
+        };
+
+        window.disconnectFirebase = function() {
+            localStorage.removeItem('myFirebaseConfig');
+            document.getElementById('configTextarea').value = '';
+            db = null;
+            if (unsubscribeSnapshot) {
+                unsubscribeSnapshot();
+                unsubscribeSnapshot = null;
+            }
+            cloudStatus = 'disconnected';
+            updateCloudBadge();
+            closeSettings();
+            showMessage('success', 'クラウド連携を解除し、ローカルモードに戻りました。');
+        };
+
+        window.saveData = async function() {
+            const btn = document.getElementById('saveBtn');
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="ph ph-spinner animate-spin text-lg"></i><span>保存中...</span>';
+            btn.disabled = true;
+
+            if (db && cloudStatus === 'connected') {
+                try {
+                    const docRef = doc(db, 'sharedData', 'cardCaseStatus');
+                    await setDoc(docRef, {
+                        records: records,
+                        targetDate: targetDate,
+                        updatedAt: new Date().toISOString()
+                    });
+                    showMessage('success', 'クラウドにデータを保存し、全員と同期しました！');
+                } catch (error) {
+                    console.error("保存エラー:", error);
+                    showMessage('error', 'クラウドへの保存に失敗しました。Firestoreのルール設定を確認してください。');
+                }
+            } else {
+                showMessage('success', 'ローカル環境に保存しました（クラウド未接続）');
+            }
+
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+        };
+
+        // ==========================================
+        // Excel 読み込み処理
+        // ==========================================
+        async function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const btn = document.getElementById('uploadBtn');
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="ph ph-spinner animate-spin text-lg"></i><span>読込中...</span>';
+            btn.disabled = true;
+
+            try {
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const data = new Uint8Array(evt.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const sheetName = workbook.SheetNames.find(name => name.includes('在籍')) || workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[sheetName];
+                        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+                        const newRecords = [];
+                        let idCounter = 1;
+
+                        jsonData.forEach(row => {
+                            const name = row[1];
+                            if (name && typeof name === 'string' && name.trim() !== '社員名称' && name.trim() !== '') {
+                                newRecords.push({
+                                    id: idCounter++,
+                                    name: name.trim(),
+                                    hasCardCase: row[2] ? String(row[2]).trim() : '',
+                                    hasAmountAnomaly: row[3] ? String(row[3]).trim() : '',
+                                    notes: row[4] ? String(row[4]).trim() : ''
+                                });
+                            }
+                        });
+
+                        if (newRecords.length > 0) {
+                            records = newRecords;
+                            clearSearch();
+                            renderTable();
+                            showMessage('success', `${newRecords.length}件読み込みました。「保存して共有」を押すとクラウドへ反映されます。`);
+                        } else {
+                            showMessage('error', '有効な社員データが見つかりませんでした。');
+                        }
+                    } catch (error) {
+                        showMessage('error', 'ファイルの解析中にエラーが発生しました。');
+                    } finally {
+                        btn.innerHTML = originalHtml;
+                        btn.disabled = false;
+                        fileInput.value = '';
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            } catch (error) {
+                showMessage('error', error.message);
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+            }
+        }
+
+        // ==========================================
+        // モーダル制御
+        // ==========================================
+        window.openSettings = function() {
+            document.getElementById('settingsModal').classList.remove('hidden-important');
+        };
+
+        window.closeSettings = function() {
+            document.getElementById('settingsModal').classList.add('hidden-important');
+        };
+    </script>
+</body>
+</html>
+                
+             
